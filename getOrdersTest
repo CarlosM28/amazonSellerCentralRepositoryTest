@@ -1,0 +1,72 @@
+import requests
+import pandas as pd
+from datetime import datetime
+import pytz
+
+# Configura tus credenciales aquí
+client_id = "xxxx" 
+client_secret = "xxxxx" 
+refresh_token = "xxxxxx" 
+
+def get_access_token(client_id, client_secret, refresh_token):
+    url = "https://api.amazon.com/auth/o2/token"
+    payload = {
+        'grant_type': 'refresh_token',
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'refresh_token': refresh_token
+    }
+    response = requests.post(url, data=payload)
+    return response.json().get('access_token')
+
+def get_orders(access_token):
+    url = "https://sellingpartnerapi-eu.amazon.com/orders/v0/orders"  # Endpoint para España
+    
+    # Obtener la fecha actual en UTC
+    now = datetime.now(pytz.utc)
+    x_amz_date = now.strftime('%Y%m%dT%H%M%SZ')
+    
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'x-amz-access-token': access_token,
+        'x-amz-date': x_amz_date,
+    }
+    
+    # Define el marketplaceId para España
+    marketplace_id = "A1RKKUPI1FS71"  # Este es el marketplaceId para España
+
+    # Añadir parámetros a la URL
+    params = {
+        'MarketplaceIds': marketplace_id,
+        'CreatedAfter': '2023-01-01'  # Obtener órdenes a partir del 1 de enero de 2022
+    }
+
+    # Impresiones para depuración
+    print("URL:", url)
+    print("Headers:", headers)
+    print("Params:", params)
+
+    # Realiza la solicitud GET con parámetros
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code == 200:
+        return response.json()  # Retorna los datos de órdenes en formato JSON
+    else:
+        print("Error to get orders:", response.status_code, response.text)
+        return None
+
+def main():
+    access_token = get_access_token(client_id, client_secret, refresh_token)
+    if access_token:
+        print("Access Token obtenido")
+        orders_data = get_orders(access_token)
+        if orders_data and 'payload' in orders_data and 'Orders' in orders_data['payload']:
+            orders_df = pd.json_normalize(orders_data['payload']['Orders'])
+            print(orders_df.head())  # Muestra las primeras filas del DataFrame
+            orders_df.to_csv('orders_data.csv', index=False)  # Guarda como CSV
+            print("Saving data in orders_data.csv")
+        else:
+            print("Not found orders.")
+
+if __name__ == "__main__":
+    main()
