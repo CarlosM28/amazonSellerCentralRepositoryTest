@@ -2,11 +2,20 @@ import requests
 import pandas as pd
 from datetime import datetime
 import pytz
+import mysql.connector
+from mysql.connector import Error
 
 # Configura tus credenciales aquí
-client_id = "xxxx" 
-client_secret = "xxxxx" 
-refresh_token = "xxxxxx" 
+client_id = "xxxxxxxxxxxxxxxxx"
+client_secret = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+refresh_token = "xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Configuración de conexión a MySQL
+mysql_host = 'TU_HOST'         # Cambia esto
+mysql_user = 'TU_USUARIO'      # Cambia esto
+mysql_password = 'TU_CONTRASEÑA'  # Cambia esto
+mysql_database = 'TU_BASE_DE_DATOS'  # Cambia esto
+mysql_table = 'orders'         # Nombre de la tabla donde se guardarán los datos
 
 def get_access_token(client_id, client_secret, refresh_token):
     url = "https://api.amazon.com/auth/o2/token"
@@ -20,53 +29,78 @@ def get_access_token(client_id, client_secret, refresh_token):
     return response.json().get('access_token')
 
 def get_orders(access_token):
-    url = "https://sellingpartnerapi-eu.amazon.com/orders/v0/orders"  # Endpoint para España
-    
-    # Obtener la fecha actual en UTC
+    url = "https://sellingpartnerapi-eu.amazon.com/orders/v0/orders"
+
     now = datetime.now(pytz.utc)
     x_amz_date = now.strftime('%Y%m%dT%H%M%SZ')
-    
+
     headers = {
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json',
         'x-amz-access-token': access_token,
         'x-amz-date': x_amz_date,
     }
-    
-    # Define el marketplaceId para España
-    marketplace_id = "A1RKKUPI1FS71"  # Este es el marketplaceId para España
 
-    # Añadir parámetros a la URL
+    marketplace_id = "A1RKKUPIHCS9HS"
     params = {
         'MarketplaceIds': marketplace_id,
-        'CreatedAfter': '2023-01-01'  # Obtener órdenes a partir del 1 de enero de 2022
+        'CreatedAfter': '2023-01-01',
+        'MaxResultsPerPage': 100
     }
 
-    # Impresiones para depuración
-    print("URL:", url)
-    print("Headers:", headers)
-    print("Params:", params)
+    all_orders = []
+    while True:
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            if 'payload' in data and 'Orders' in data['payload']:
+                all_orders.extend(data['payload']['Orders'])
 
-    # Realiza la solicitud GET con parámetros
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code == 200:
-        return response.json()  # Retorna los datos de órdenes en formato JSON
-    else:
-        print("Error to get orders:", response.status_code, response.text)
-        return None
+            if 'payload' in data and 'NextToken' in data['payload']:
+                params['NextToken'] = data['payload']['NextToken']
+            else:
+                break
+        else:
+            print("Error al obtener órdenes:", response.status_code, response.text)
+            break
+
+    return all_orders
+
+def save_to_mysql(df):
+    try:
+        connection = mysql.connector.connect(
+            host=mysql_host,
+            user=mysql_user,
+            password=mysql_password,
+            database=mysql_database
+        )
+        if connection.is_connected():
+            cursor = connection.cursor()
+            for _, row in df.iterrows():
+                sql = f"INSERT INTO {mysql_table} (order_id, purchase_date, order_status) VALUES (%s, %s, %s)"
+                data = (row['AmazonOrderId'], row['PurchaseDate'], row['OrderStatus'])
+                cursor.execute(sql, data)
+            connection.commit()
+            print("Datos insertados en MySQL con éxito")
+    except Error as err:
+        print(f"Error al conectar a MySQL: {err}")
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
 
 def main():
     access_token = get_access_token(client_id, client_secret, refresh_token)
     if access_token:
         print("Access Token obtenido")
         orders_data = get_orders(access_token)
-        if orders_data and 'payload' in orders_data and 'Orders' in orders_data['payload']:
-            orders_df = pd.json_normalize(orders_data['payload']['Orders'])
-            print(orders_df.head())  # Muestra las primeras filas del DataFrame
+        if orders_data:
+            orders_df = pd.json_normalize(orders_data)
             orders_df.to_csv('orders_data.csv', index=False)  # Guarda como CSV
-            print("Saving data in orders_data.csv")
+            print("Datos guardados en orders_data.csv")
+            save_to_mysql(orders_df)  # Guarda en MySQL
         else:
-            print("Not found orders.")
+            print("No se encontraron órdenes o el formato de respuesta es inesperado.")
 
 if __name__ == "__main__":
     main()
